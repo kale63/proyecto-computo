@@ -1,0 +1,224 @@
+let currentUser = null;
+let selectedUser = null;
+
+document.addEventListener('DOMContentLoaded', () => {
+    const modal = new bootstrap.Modal(document.getElementById('usernameModal'));
+    modal.show();
+    
+    document.getElementById('submitUsername').addEventListener('click', registerUser);
+    document.getElementById('usernameInput').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') registerUser();
+    });
+
+    document.getElementById('sendButton').addEventListener('click', sendMessage);
+    document.getElementById('messageInput').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') sendMessage();
+    });
+});
+
+function registerUser() {
+    const username = document.getElementById('usernameInput').value.trim();
+    if (!username) return alert("Username cannot be empty");
+
+    const xml = `<UserRequest><name>${username}</name></UserRequest>`;
+    
+    fetch('/api/register', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/xml'},
+        body: xml
+    })
+    .then(response => response.text())
+    .then(str => (new DOMParser()).parseFromString(str, "text/xml"))
+    .then(xmlResponse => {
+        const status = xmlResponse.getElementsByTagName('status')[0].textContent;
+        if (status === 'OK') {
+            currentUser = username;
+            document.getElementById('currentUserDisplay').textContent = username;
+            
+            bootstrap.Modal.getInstance(document.getElementById('usernameModal')).hide();
+            
+            document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+            
+            document.body.classList.remove('modal-open');
+            document.body.style.overflow = 'auto';
+            
+            initializeChat();
+        }
+    })
+    .catch(error => console.error('Registration error:', error));
+}
+
+function sendMessage() {
+    if (!selectedUser || !currentUser) {
+        alert("Escoge un usuario para enviar un mensaje antes.");
+        return;
+    }
+    
+    const message = document.getElementById('messageInput').value.trim();
+    if (!message) return;
+
+    const to = selectedUser === 'Everyone' ? 'all' : selectedUser;
+    
+    const xmlDoc = new DOMParser().parseFromString('<Message/>', 'text/xml');
+    const root = xmlDoc.documentElement;
+    
+    const addElement = (name, value) => {
+        const el = xmlDoc.createElement(name);
+        el.textContent = value;
+        root.appendChild(el);
+    };
+    
+    addElement('from', currentUser);
+    addElement('to', to);
+    addElement('text', message);
+    
+    const xml = new XMLSerializer().serializeToString(xmlDoc);
+    console.log("Sending XML:", xml); // para debugging
+
+    fetch('/api/send', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/xml',
+            'Accept': 'application/xml'
+        },
+        body: xml
+    })
+    .then(response => {
+        if (!response.ok) {
+            return response.text().then(text => {
+                console.error("Server response:", text);
+                throw new Error(`HTTP ${response.status}: ${text}`);
+            });
+        }
+        document.getElementById('messageInput').value = '';
+        updateMessages();
+    })
+    .catch(error => {
+        console.error('Send error:', error);
+        alert(`Send failed: ${error.message}`);
+    });
+}
+
+function updateUserList() {
+    fetch('/api/users')
+        .then(response => response.text())
+        .then(str => (new DOMParser()).parseFromString(str, "text/xml"))
+        .then(xml => {
+            const users = Array.from(xml.getElementsByTagName('user'))
+                .map(node => node.textContent)
+                .filter(user => user !== currentUser);
+
+            const userList = document.getElementById('userList');
+            userList.innerHTML = '';
+
+            // Add Everyone option
+            const everyone = createUserListItem('Everyone');
+            userList.appendChild(everyone);
+
+            // Add other users
+            users.forEach(user => {
+                userList.appendChild(createUserListItem(user));
+            });
+        })
+        .catch(error => console.error('User update error:', error));
+}
+
+function formatMessage(msg, isCurrentUser) {
+    if (!msg.includes(':')) {
+        console.warn('Malformed message:', msg);
+        return `<div class="message-bubble other-message">${msg}</div>`;
+    }
+
+    const colonIndex = msg.indexOf(':');
+    const sender = msg.substring(0, colonIndex).trim();
+    let content = msg.substring(colonIndex + 1).trim();
+    
+    const isBroadcast = content.startsWith('[Broadcast]');
+    if (isBroadcast) {
+        content = content.replace('[Broadcast]', '').trim();
+    }
+
+    return `
+        <div class="message-container">
+            <div class="message-bubble ${isCurrentUser ? 'user-message' : 'other-message'}">
+                <div class="message-info">
+                    ${isBroadcast ? '<span class="badge bg-warning">Broadcast</span>' : ''}
+                </div>${content}
+            </div>
+        </div>
+    `;
+}
+
+function updateMessages() {
+    if (!selectedUser || !currentUser) return;
+    
+    const targetUser = selectedUser === 'Everyone' ? 'all' : selectedUser;
+    fetch(`/api/messages?user1=${currentUser}&user2=${targetUser}`)
+        .then(response => {
+            if (!response.ok) throw new Error('Network error');
+            return response.text();
+        })
+        .then(str => {
+            try {
+                const parser = new DOMParser();
+                const xml = parser.parseFromString(str, "text/xml");
+                
+                if (xml.querySelector('parsererror')) {
+                    throw new Error('Invalid XML received');
+                }
+
+                const messages = Array.from(xml.getElementsByTagName('message'))
+                    .map(node => node.textContent)
+                    .filter(msg => msg.trim().length > 0);
+
+                const messagesDiv = document.getElementById('messages');
+                messagesDiv.innerHTML = messages
+                    .map(msg => {
+                        const isCurrentUser = msg.startsWith(currentUser + ':');
+                        return formatMessage(msg, isCurrentUser);
+                    })
+                    .join('');
+
+            } catch (error) {
+                console.error('Message processing error:', error);
+                document.getElementById('messages').innerHTML = 
+                    `<div class="alert alert-danger">Error loading messages</div>`;
+            }
+        })
+        .catch(error => {
+            console.error('Fetch error:', error);
+        });
+}
+
+function createUserListItem(username) {
+    const li = document.createElement('li');
+    li.className = 'list-group-item';
+    li.textContent = username;
+    li.addEventListener('click', () => {
+        document.querySelectorAll('#userList li').forEach(item => 
+            item.classList.remove('active'));
+        li.classList.add('active');
+        selectedUser = username === 'Everyone' ? 'Everyone' : username;
+        updateSelectedUserHeader();
+        updateMessages();
+    });
+    return li;
+}
+
+function updateSelectedUserHeader() {
+    const headerElement = document.getElementById('selected-user-name');
+    if (selectedUser === 'Everyone') {
+        headerElement.textContent = 'Todos';
+        headerElement.className = 'all-users';
+    } else {
+        headerElement.textContent = selectedUser;
+        headerElement.className = 'specific-user';
+    }
+}
+
+function initializeChat() {
+    setInterval(updateUserList, 3000);
+    setInterval(updateMessages, 1500);
+    updateSelectedUserHeader();
+    updateUserList();
+}
