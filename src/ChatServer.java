@@ -105,15 +105,15 @@ public class ChatServer implements ChatInterface, java.rmi.Remote {
         String path = exchange.getRequestURI().getPath();
         if (path.equals("/")) path = "/index.html";
         
-        System.out.println("Trying to serve: " + path);
+        System.out.println("Intentando recuperar: " + path);
         
         try {
             File file = new File("src/web" + path).getCanonicalFile();
-            System.out.println("Looking for file at: " + file.getAbsolutePath());
+            System.out.println("Buscando el archivo en: " + file.getAbsolutePath());
             
             if (!file.exists()) {
-                System.out.println("File not found!");
-                sendErrorResponse(exchange, 404, "Not found");
+                System.out.println("Archivo no encontrado!");
+                sendErrorResponse(exchange, 404, "No encontrado");
                 return;
             }
             
@@ -132,10 +132,10 @@ public class ChatServer implements ChatInterface, java.rmi.Remote {
                 os.write(fileData);
             }
             
-            System.out.println("Successfully served: " + path);
+            System.out.println("Exito al encontrar: " + path);
         } catch (Exception e) {
-            System.out.println("Error serving file: " + e.getMessage());
-            sendErrorResponse(exchange, 500, "Server error");
+            System.out.println("Error al encontrar el archivo: " + e.getMessage());
+            sendErrorResponse(exchange, 500, "Error del servidor");
         }
     }
     
@@ -143,7 +143,7 @@ public class ChatServer implements ChatInterface, java.rmi.Remote {
         HttpServer server = HttpServer.create(new InetSocketAddress(HTTP_PORT), 0);
         server.createContext("/", exchange -> {
             String path = exchange.getRequestURI().getPath();
-            System.out.println("Received request for: " + path);
+            System.out.println("Peticion de: " + path);
             
             if (path.startsWith("/api")) {
                 try {
@@ -154,7 +154,7 @@ public class ChatServer implements ChatInterface, java.rmi.Remote {
                         handleGetRequest(exchange, path);
                     }
                 } catch (Exception e) {
-                    sendErrorResponse(exchange, 500, "Server error");
+                    sendErrorResponse(exchange, 500, "Error del servidor");
                 }
             } else {
                 serveStaticFile(exchange);
@@ -162,7 +162,7 @@ public class ChatServer implements ChatInterface, java.rmi.Remote {
         });
         server.setExecutor(null);
         server.start();
-        System.out.println("HTTP server started on port " + HTTP_PORT);
+        //System.out.println("Servidor HTTP iniciado en el puerto " + HTTP_PORT);
     }
 
     private void handlePostRequest(HttpExchange exchange, String path) throws IOException {
@@ -171,7 +171,7 @@ public class ChatServer implements ChatInterface, java.rmi.Remote {
         } else if ("/api/send".equals(path)) {
             handleSendMessage(exchange);
         } else {
-            sendErrorResponse(exchange, 404, "Not found");
+            sendErrorResponse(exchange, 404, "No encontrado");
         }
     }
 
@@ -181,7 +181,7 @@ public class ChatServer implements ChatInterface, java.rmi.Remote {
         } else if ("/api/messages".equals(path)) {
             handleGetMessages(exchange);
         } else {
-            sendErrorResponse(exchange, 404, "Not found");
+            sendErrorResponse(exchange, 404, "No encontrado");
         }
     }
 
@@ -193,7 +193,7 @@ public class ChatServer implements ChatInterface, java.rmi.Remote {
             registerUser(username);
             sendXMLResponse(exchange, "<status>OK</status>");
         } catch (Exception e) {
-            sendErrorResponse(exchange, 400, "Invalid XML format");
+            sendErrorResponse(exchange, 400, "Formato XML invalido");
         }
     }
 
@@ -211,7 +211,7 @@ public class ChatServer implements ChatInterface, java.rmi.Remote {
             String text = getFirstElementText(doc, "text", "message", "content");
     
             if (from == null || to == null || text == null) {
-                sendErrorResponse(exchange, 400, "Missing required fields (from/to/text)");
+                sendErrorResponse(exchange, 400, "Faltan campos (from/to/text)");
                 return;
             }
     
@@ -223,8 +223,8 @@ public class ChatServer implements ChatInterface, java.rmi.Remote {
             
             sendXMLResponse(exchange, "<response><status>OK</status></response>");
         } catch (Exception e) {
-            System.err.println("Error processing message: " + e.getMessage());
-            sendErrorResponse(exchange, 400, "Invalid message format");
+            System.err.println("Error al procesar el mesnaje: " + e.getMessage());
+            sendErrorResponse(exchange, 400, "Formato de mensaje invalido");
         }
     }
     
@@ -252,7 +252,7 @@ public class ChatServer implements ChatInterface, java.rmi.Remote {
 
             sendXMLResponse(exchange, documentToString(doc));
         } catch (Exception e) {
-            sendErrorResponse(exchange, 500, "Error generating user list");
+            sendErrorResponse(exchange, 500, "Error al generar la lista de usuarios");
         }
     }
 
@@ -275,7 +275,7 @@ public class ChatServer implements ChatInterface, java.rmi.Remote {
 
             sendXMLResponse(exchange, documentToString(doc));
         } catch (Exception e) {
-            sendErrorResponse(exchange, 400, "Invalid request parameters");
+            sendErrorResponse(exchange, 400, "Peticion invalida");
         }
     }
 
@@ -326,12 +326,12 @@ public class ChatServer implements ChatInterface, java.rmi.Remote {
             ChatServer server = new ChatServer();
             ChatInterface stub = (ChatInterface) UnicastRemoteObject.exportObject(server, 0);
             
-            Registry registry = LocateRegistry.createRegistry(1099);
+            Registry registry = LocateRegistry.createRegistry(RMI_PORT);
             registry.rebind("ChatService", stub);
             
             server.startHttpServer();
             
-            System.out.println("Servidor inicidado...");
+            System.out.println("Servidor iniciado...");
             
         } catch (Exception e) {
             e.printStackTrace();

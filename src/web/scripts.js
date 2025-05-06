@@ -18,7 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function registerUser() {
     const username = document.getElementById('usernameInput').value.trim();
-    if (!username) return alert("Username cannot be empty");
+    if (!username) return alert("El nombre de usuario no puede estar vacío.");
 
     const xml = `<UserRequest><name>${username}</name></UserRequest>`;
     
@@ -45,19 +45,19 @@ function registerUser() {
             initializeChat();
         }
     })
-    .catch(error => console.error('Registration error:', error));
+    .catch(error => console.error('Error en el registro:', error));
 }
 
 function sendMessage() {
     if (!selectedUser || !currentUser) {
-        alert("Escoge un usuario para enviar un mensaje antes.");
+        alert("Debes escoger un usuario para enviar un mensaje.");
         return;
     }
     
     const message = document.getElementById('messageInput').value.trim();
     if (!message) return;
 
-    const to = selectedUser === 'Everyone' ? 'all' : selectedUser;
+    const to = selectedUser === 'Todos' ? 'all' : selectedUser;
     
     const xmlDoc = new DOMParser().parseFromString('<Message/>', 'text/xml');
     const root = xmlDoc.documentElement;
@@ -73,7 +73,7 @@ function sendMessage() {
     addElement('text', message);
     
     const xml = new XMLSerializer().serializeToString(xmlDoc);
-    console.log("Sending XML:", xml); // para debugging
+    console.log("Enviando XML:", xml); // para debugging
 
     fetch('/api/send', {
         method: 'POST',
@@ -86,7 +86,7 @@ function sendMessage() {
     .then(response => {
         if (!response.ok) {
             return response.text().then(text => {
-                console.error("Server response:", text);
+                console.error("Respuesta del servidor:", text);
                 throw new Error(`HTTP ${response.status}: ${text}`);
             });
         }
@@ -94,8 +94,8 @@ function sendMessage() {
         updateMessages();
     })
     .catch(error => {
-        console.error('Send error:', error);
-        alert(`Send failed: ${error.message}`);
+        console.error('Error de envío:', error);
+        alert(`Error al enviar: ${error.message}`);
     });
 }
 
@@ -111,21 +111,19 @@ function updateUserList() {
             const userList = document.getElementById('userList');
             userList.innerHTML = '';
 
-            // Add Everyone option
-            const everyone = createUserListItem('Everyone');
+            const everyone = createUserListItem('Todos');
             userList.appendChild(everyone);
 
-            // Add other users
             users.forEach(user => {
                 userList.appendChild(createUserListItem(user));
             });
         })
-        .catch(error => console.error('User update error:', error));
+        .catch(error => console.error('Error al actualizar la lista de usuarios:', error));
 }
 
 function formatMessage(msg, isCurrentUser) {
     if (!msg.includes(':')) {
-        console.warn('Malformed message:', msg);
+        console.warn('Mensaje mal formado:', msg);
         return `<div class="message-bubble other-message">${msg}</div>`;
     }
 
@@ -152,10 +150,10 @@ function formatMessage(msg, isCurrentUser) {
 function updateMessages() {
     if (!selectedUser || !currentUser) return;
     
-    const targetUser = selectedUser === 'Everyone' ? 'all' : selectedUser;
+    const targetUser = selectedUser === 'Todos' ? 'all' : selectedUser;
     fetch(`/api/messages?user1=${currentUser}&user2=${targetUser}`)
         .then(response => {
-            if (!response.ok) throw new Error('Network error');
+            if (!response.ok) throw new Error('Error de red');
             return response.text();
         })
         .then(str => {
@@ -164,7 +162,7 @@ function updateMessages() {
                 const xml = parser.parseFromString(str, "text/xml");
                 
                 if (xml.querySelector('parsererror')) {
-                    throw new Error('Invalid XML received');
+                    throw new Error('XML invalido recibido');
                 }
 
                 const messages = Array.from(xml.getElementsByTagName('message'))
@@ -180,9 +178,9 @@ function updateMessages() {
                     .join('');
 
             } catch (error) {
-                console.error('Message processing error:', error);
+                console.error('Error al procesar:', error);
                 document.getElementById('messages').innerHTML = 
-                    `<div class="alert alert-danger">Error loading messages</div>`;
+                    `<div class="alert alert-danger">Error al cargar los mensajes</div>`;
             }
         })
         .catch(error => {
@@ -198,7 +196,7 @@ function createUserListItem(username) {
         document.querySelectorAll('#userList li').forEach(item => 
             item.classList.remove('active'));
         li.classList.add('active');
-        selectedUser = username === 'Everyone' ? 'Everyone' : username;
+        selectedUser = username === 'Todos' ? 'Todos' : username;
         updateSelectedUserHeader();
         updateMessages();
     });
@@ -207,7 +205,7 @@ function createUserListItem(username) {
 
 function updateSelectedUserHeader() {
     const headerElement = document.getElementById('selected-user-name');
-    if (selectedUser === 'Everyone') {
+    if (selectedUser === 'Todos') {
         headerElement.textContent = 'Todos';
         headerElement.className = 'all-users';
     } else {
