@@ -221,3 +221,18 @@ h1 {
     background-color: #e9f5f1;
     color: #023e41;
 }
+
+#logoutButton {
+    transition: all 0.3s ease;
+}
+
+#pageTitle {
+    transition: all 0.3s ease;
+}
+
+@media (max-width: 900px) {
+    h2 {
+        font-size: 0.9rem;
+        text-wrap: normal;
+    }
+}
