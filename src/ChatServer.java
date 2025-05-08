@@ -26,7 +26,16 @@ public class ChatServer implements ChatInterface, java.rmi.Remote {
     }
 
     public synchronized void unregisterUser(String username) {
-        connectedUsers.remove(username);
+        if (connectedUsers.remove(username)) {
+            String notification = username + " salió del chat.";
+            for (String user : new ArrayList<>(connectedUsers)) {
+                String key = getKey("System", user);
+                userMessages.computeIfAbsent(key, k -> new ArrayList<>())
+                          .add("System: " + notification);
+            }
+            saveMessageToXML("System", "all", notification);
+            System.out.println("Se borró al usuario: " + username);
+        }
     }
 
     public synchronized void sendMessage(String from, String to, String message) {
@@ -141,37 +150,51 @@ public class ChatServer implements ChatInterface, java.rmi.Remote {
     
     private void startHttpServer() throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(HTTP_PORT), 0);
+        
         server.createContext("/", exchange -> {
             String path = exchange.getRequestURI().getPath();
-            System.out.println("Peticion de: " + path);
+            System.out.println("Peticion a: " + path);
             
-            if (path.startsWith("/api")) {
-                try {
-                    exchange.getResponseHeaders().add("Content-Type", "application/xml");
+            try {
+                if (path.startsWith("/api")) {
                     if ("POST".equalsIgnoreCase(exchange.getRequestMethod())) {
                         handlePostRequest(exchange, path);
                     } else {
                         handleGetRequest(exchange, path);
                     }
-                } catch (Exception e) {
-                    sendErrorResponse(exchange, 500, "Error del servidor");
+                } else {
+                    serveStaticFile(exchange);
                 }
-            } else {
-                serveStaticFile(exchange);
+            } finally {
+                exchange.close();
             }
         });
-        server.setExecutor(null);
+        
         server.start();
-        //System.out.println("Servidor HTTP iniciado en el puerto " + HTTP_PORT);
+        //System.out.println("HTTP corriendo en " + HTTP_PORT);
     }
 
     private void handlePostRequest(HttpExchange exchange, String path) throws IOException {
-        if ("/api/register".equals(path)) {
-            handleRegister(exchange);
-        } else if ("/api/send".equals(path)) {
-            handleSendMessage(exchange);
-        } else {
-            sendErrorResponse(exchange, 404, "No encontrado");
+        try {
+            exchange.getResponseHeaders().add("Content-Type", "application/xml");
+            
+            if ("/api/register".equals(path)) {
+                handleRegister(exchange);
+            } 
+            else if ("/api/send".equals(path)) {
+                handleSendMessage(exchange);
+            }
+            else if ("/api/unregister".equals(path)) {
+                handleUnregister(exchange); // Now properly routed
+            }
+            else if ("/api/notify-logout".equals(path)) {
+                handleLogoutNotification(exchange);
+            }
+            else {
+                sendErrorResponse(exchange, 404, "Endpoint not found");
+            }
+        } catch (Exception e) {
+            sendErrorResponse(exchange, 500, "Server error: " + e.getMessage());
         }
     }
 
@@ -194,6 +217,22 @@ public class ChatServer implements ChatInterface, java.rmi.Remote {
             sendXMLResponse(exchange, "<status>OK</status>");
         } catch (Exception e) {
             sendErrorResponse(exchange, 400, "Formato XML invalido");
+        }
+    }
+
+    private void handleUnregister(HttpExchange exchange) throws IOException {
+        try {
+            Document doc = parseRequestBody(exchange);
+            String username = doc.getElementsByTagName("name").item(0).getTextContent();
+            
+            unregisterUser(username);
+            
+            sendXMLResponse(exchange, "<status>OK</status>");
+            
+            System.out.println("El usuario " + username + " se desconectó");
+        } catch (Exception e) {
+            System.err.println("Error al unregistrarxd: " + e.getMessage());
+            sendErrorResponse(exchange, 400, "Peticion invalida");
         }
     }
 

@@ -14,6 +14,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('messageInput').addEventListener('keypress', (e) => {
         if (e.key === 'Enter') sendMessage();
     });
+
+    document.getElementById('logoutButton').addEventListener('click', logoutUser);
 });
 
 function registerUser() {
@@ -34,7 +36,9 @@ function registerUser() {
         if (status === 'OK') {
             currentUser = username;
             document.getElementById('currentUserDisplay').textContent = username;
-            
+            document.getElementById('logoutButton').style.display = 'block';
+            document.title = `${username} - Chat`;
+
             bootstrap.Modal.getInstance(document.getElementById('usernameModal')).hide();
             
             document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
@@ -100,25 +104,40 @@ function sendMessage() {
 }
 
 function updateUserList() {
-    fetch('/api/users')
+    if (!currentUser) return;
+    
+    fetch('/api/users?forceRefresh=' + new Date().getTime()) 
         .then(response => response.text())
-        .then(str => (new DOMParser()).parseFromString(str, "text/xml"))
-        .then(xml => {
-            const users = Array.from(xml.getElementsByTagName('user'))
+        .then(str => {
+            const xml = new DOMParser().parseFromString(str, "text/xml");
+            const users = Array.from(xml.getElementsByTagName("user"))
                 .map(node => node.textContent)
                 .filter(user => user !== currentUser);
-
-            const userList = document.getElementById('userList');
-            userList.innerHTML = '';
-
-            const everyone = createUserListItem('Todos');
-            userList.appendChild(everyone);
-
-            users.forEach(user => {
-                userList.appendChild(createUserListItem(user));
-            });
+            
+            refreshUserListUI(users);
+            checkSelectedUserValidity(users);
         })
-        .catch(error => console.error('Error al actualizar la lista de usuarios:', error));
+        .catch(console.error);
+}
+
+function refreshUserListUI(users) {
+    const userList = document.getElementById('userList');
+    userList.innerHTML = '';
+    
+    userList.appendChild(createUserListItem('Todos'));
+    
+    users.forEach(user => {
+        userList.appendChild(createUserListItem(user));
+    });
+}
+
+function checkSelectedUserValidity(users) {
+    if (selectedUser && selectedUser !== 'Todos' && !users.includes(selectedUser)) {
+        selectedUser = null;
+        document.getElementById('messages').innerHTML = 
+            '<div class="alert alert-info">El usuario seleccionado ya no está disponible</div>';
+        updateSelectedUserHeader();
+    }
 }
 
 function formatMessage(msg, isCurrentUser) {
@@ -212,6 +231,32 @@ function updateSelectedUserHeader() {
         headerElement.textContent = selectedUser;
         headerElement.className = 'specific-user';
     }
+}
+
+function logoutUser() {
+    if (!currentUser) return;
+     
+    fetch('/api/unregister', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/xml'},
+        body: `<UserRequest><name>${currentUser}</name></UserRequest>`
+    })
+    .then(() => {
+        return fetch('/api/notify-logout', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/xml'},
+            body: `<LogoutNotification><username>${currentUser}</username></LogoutNotification>`
+        });
+    })
+    .then(() => updateUserList())
+    .catch(console.error)
+    .finally(() => {
+        currentUser = null;
+        document.getElementById('currentUserDisplay').textContent = 'Sin Usuario';
+        document.getElementById('logoutButton').style.display = 'none';
+        document.title = 'Chat Cliente';
+        new bootstrap.Modal(document.getElementById('usernameModal')).show();
+    });
 }
 
 function initializeChat() {
