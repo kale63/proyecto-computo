@@ -185,10 +185,7 @@ public class ChatServer implements ChatInterface, java.rmi.Remote {
                 handleSendMessage(exchange);
             }
             else if ("/api/unregister".equals(path)) {
-                handleUnregister(exchange); // Now properly routed
-            }
-            else if ("/api/notify-logout".equals(path)) {
-                handleLogoutNotification(exchange);
+                handleUnregister(exchange); 
             }
             else {
                 sendErrorResponse(exchange, 404, "Endpoint not found");
