@@ -1,5 +1,7 @@
 let currentUser = null;
-let selectedUser = null;
+let selectedGroup = new Set(['all']); 
+const groupSelections = new Map();
+
 
 document.addEventListener('DOMContentLoaded', () => {
     const modal = new bootstrap.Modal(document.getElementById('usernameModal'));
@@ -17,6 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.getElementById('logoutButton').addEventListener('click', logoutUser);
 });
+
 
 function registerUser() {
     const username = document.getElementById('usernameInput').value.trim();
@@ -53,69 +56,41 @@ function registerUser() {
 }
 
 function sendMessage() {
-    if (!selectedUser || !currentUser) {
-        alert("Debes escoger un usuario para enviar un mensaje.");
-        return;
-    }
-    
     const message = document.getElementById('messageInput').value.trim();
     if (!message) return;
+    
+    if (selectedGroup.size === 0 || (selectedGroup.has('all') && selectedGroup.size > 1)) {
+        alert("Selección invalida. Debe seleccionar al menos un usuario o 'Todos'.");
+        return;
+    }
 
-    const to = selectedUser === 'Todos' ? 'all' : selectedUser;
-    
-    const xmlDoc = new DOMParser().parseFromString('<Message/>', 'text/xml');
-    const root = xmlDoc.documentElement;
-    
-    const addElement = (name, value) => {
-        const el = xmlDoc.createElement(name);
-        el.textContent = value;
-        root.appendChild(el);
-    };
-    
-    addElement('from', currentUser);
-    addElement('to', to);
-    addElement('text', message);
-    
-    const xml = new XMLSerializer().serializeToString(xmlDoc);
-    console.log("Enviando XML:", xml); // para debugging
+    const recipients = Array.from(selectedGroup).join(',');
+    const xml = `<Message>
+        <from>${currentUser}</from>
+        <to>${recipients}</to>
+        <text>${message}</text>
+    </Message>`;
 
     fetch('/api/send', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/xml',
-            'Accept': 'application/xml'
-        },
+        headers: {'Content-Type': 'application/xml'},
         body: xml
-    })
-    .then(response => {
-        if (!response.ok) {
-            return response.text().then(text => {
-                console.error("Respuesta del servidor:", text);
-                throw new Error(`HTTP ${response.status}: ${text}`);
-            });
-        }
+    }).then(() => {
         document.getElementById('messageInput').value = '';
         updateMessages();
-    })
-    .catch(error => {
-        console.error('Error de envío:', error);
-        alert(`Error al enviar: ${error.message}`);
-    });
+    }).catch(console.error);
 }
 
 function updateUserList() {
     if (!currentUser) return;
     
-    fetch('/api/users?forceRefresh=' + new Date().getTime()) 
+    fetch('/api/users?forceRefresh=' + Date.now())
         .then(response => response.text())
         .then(str => {
             const xml = new DOMParser().parseFromString(str, "text/xml");
             const users = Array.from(xml.getElementsByTagName("user"))
-                .map(node => node.textContent)
-                .filter(user => user !== currentUser);
-            
+                            .map(node => node.textContent);
             refreshUserListUI(users);
-            checkSelectedUserValidity(users);
         })
         .catch(console.error);
 }
@@ -124,11 +99,61 @@ function refreshUserListUI(users) {
     const userList = document.getElementById('userList');
     userList.innerHTML = '';
     
-    userList.appendChild(createUserListItem('Todos'));
-    
-    users.forEach(user => {
-        userList.appendChild(createUserListItem(user));
+    const todosItem = document.createElement('li');
+    todosItem.className = `list-group-item ${selectedGroup.has('all') ? 'active' : ''}`;
+    todosItem.innerHTML = `<i class="fas fa-users me-2"></i>Todos`;
+    todosItem.addEventListener('click', () => {
+        selectedGroup.clear();
+        selectedGroup.add('all');
+        groupSelections.clear();
+        updateSelectedUserHeader();
+        updateMessages();
     });
+    userList.appendChild(todosItem);
+
+    users.forEach(user => {
+        if (user === currentUser) return;
+        
+        const li = document.createElement('li');
+        li.className = 'list-group-item';
+        const isSelected = groupSelections.get(user) || false;
+        
+        li.innerHTML = `
+            <input type="checkbox" class="form-check-input" 
+                   ${isSelected ? 'checked' : ''} 
+                   id="user-${user}">
+            <label class="form-check-label" for="user-${user}">${user}</label>
+        `;
+
+        const checkbox = li.querySelector('input');
+        checkbox.addEventListener('change', () => {
+            if (checkbox.checked) {
+                selectedGroup.delete('all');
+                selectedGroup.add(user);
+                groupSelections.set(user, true);
+            } else {
+                selectedGroup.delete(user);
+                groupSelections.set(user, false);
+            }
+            updateSelectedUserHeader();
+            updateMessages();
+        });
+
+        userList.appendChild(li);
+    });
+}
+
+function handleUserSelection(user, isChecked) {
+    if (isChecked) {
+        selectedGroup.delete('all');
+        selectedGroup.add(user);
+        groupSelections.set(user, true);
+    } else {
+        selectedGroup.delete(user);
+        groupSelections.set(user, false);
+    }
+    updateSelectedUserHeader();
+    updateMessages();
 }
 
 function checkSelectedUserValidity(users) {
@@ -140,97 +165,129 @@ function checkSelectedUserValidity(users) {
     }
 }
 
-function formatMessage(msg, isCurrentUser) {
+function updateMessages() {
+    if (!currentUser) return;
+
+    const target = selectedGroup.has('all') 
+        ? 'all' 
+        : Array.from(selectedGroup).join(',');
+    
+    const messagesDiv = document.getElementById('messages');
+    
+    fetch(`/api/messages?user1=${currentUser}&user2=${target}&_=${Date.now()}`)
+    .then(response => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.text();
+    })
+    .then(xmlString => {
+        if (xmlString === '<messages/>') {
+            messagesDiv.innerHTML = '<div class="no-messages">No hay mensajes</div>';
+            return;
+        }
+        displayMessages(xmlString);
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        messagesDiv.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+    });
+}
+
+function displayMessages(xmlString) {
+    const messagesDiv = document.getElementById('messages');
+    messagesDiv.innerHTML = '';
+    
+    try {
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(xmlString, "text/xml");
+        const messages = xmlDoc.getElementsByTagName('message');
+
+        const isGroupChat = selectedGroup.size > 1 || (selectedGroup.has('all') && selectedGroup.size === 1);
+
+        Array.from(messages).forEach(msg => {
+            const from = msg.querySelector('from')?.textContent || 'Unknown';
+            const text = msg.querySelector('text')?.textContent || '';
+            const isCurrentUser = from === currentUser;
+
+            const messageHTML = formatMessage(`${from}: ${text}`, isCurrentUser, isGroupChat);
+
+            messagesDiv.innerHTML += messageHTML;
+        });
+
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    } catch (error) {
+        console.error('Error:', error);
+        messagesDiv.innerHTML = '<div class="error">Error displaying messages</div>';
+    }
+}
+
+
+function evaluateXPath(node, tagName) {
+    const result = node.ownerDocument.evaluate(
+        `./${tagName}`,
+        node,
+        null,
+        XPathResult.STRING_TYPE,
+        null
+    );
+    return result.stringValue.trim() || (tagName === 'from' ? 'Unknown' : 'Mensaje vacío');
+}
+
+function formatMessage(msg, isCurrentUser, isGroupChat = false) {
     if (!msg.includes(':')) {
-        console.warn('Mensaje mal formado:', msg);
+        console.warn('Malformed message:', msg);
         return `<div class="message-bubble other-message">${msg}</div>`;
     }
 
     const colonIndex = msg.indexOf(':');
     const sender = msg.substring(0, colonIndex).trim();
     let content = msg.substring(colonIndex + 1).trim();
-    
+
     const isBroadcast = content.startsWith('[Broadcast]');
     if (isBroadcast) {
         content = content.replace('[Broadcast]', '').trim();
     }
 
+    const showLabel = isGroupChat && !isCurrentUser;
+
     return `
         <div class="message-container">
             <div class="message-bubble ${isCurrentUser ? 'user-message' : 'other-message'}">
                 <div class="message-info">
+                    ${showLabel ? `<span class="sender-label">${sender}</span>` : ''}
                     ${isBroadcast ? '<span class="badge bg-warning">Broadcast</span>' : ''}
-                </div>${content}
+                </div>
+                <div class="message-text">${content}</div>
             </div>
         </div>
     `;
 }
 
-function updateMessages() {
-    if (!selectedUser || !currentUser) return;
-    
-    const targetUser = selectedUser === 'Todos' ? 'all' : selectedUser;
-    fetch(`/api/messages?user1=${currentUser}&user2=${targetUser}`)
-        .then(response => {
-            if (!response.ok) throw new Error('Error de red');
-            return response.text();
-        })
-        .then(str => {
-            try {
-                const parser = new DOMParser();
-                const xml = parser.parseFromString(str, "text/xml");
-                
-                if (xml.querySelector('parsererror')) {
-                    throw new Error('XML invalido recibido');
-                }
-
-                const messages = Array.from(xml.getElementsByTagName('message'))
-                    .map(node => node.textContent)
-                    .filter(msg => msg.trim().length > 0);
-
-                const messagesDiv = document.getElementById('messages');
-                messagesDiv.innerHTML = messages
-                    .map(msg => {
-                        const isCurrentUser = msg.startsWith(currentUser + ':');
-                        return formatMessage(msg, isCurrentUser);
-                    })
-                    .join('');
-
-            } catch (error) {
-                console.error('Error al procesar:', error);
-                document.getElementById('messages').innerHTML = 
-                    `<div class="alert alert-danger">Error al cargar los mensajes</div>`;
-            }
-        })
-        .catch(error => {
-            console.error('Fetch error:', error);
-        });
-}
-
 function createUserListItem(username) {
-    const li = document.createElement('li');
-    li.className = 'list-group-item';
-    li.textContent = username;
-    li.addEventListener('click', () => {
-        document.querySelectorAll('#userList li').forEach(item => 
-            item.classList.remove('active'));
-        li.classList.add('active');
-        selectedUser = username === 'Todos' ? 'Todos' : username;
-        updateSelectedUserHeader();
-        updateMessages();
-    });
-    return li;
+  const li = document.createElement('li');
+  li.className = 'list-group-item';
+  li.innerHTML = `
+    <input type="checkbox" class="form-check-input user-checkbox" id="user-${username}">
+    <label class="form-check-label" for="user-${username}">${username}</label>
+  `;
+
+  const checkbox = li.querySelector('.user-checkbox');
+  checkbox.addEventListener('change', () => {
+    if (checkbox.checked) {
+      selectedUsers.add(username);
+    } else {
+      selectedUsers.delete(username);
+    }
+    updateSelectedUserHeader();
+  });
+
+  return li;
 }
 
 function updateSelectedUserHeader() {
     const headerElement = document.getElementById('selected-user-name');
-    if (selectedUser === 'Todos') {
-        headerElement.textContent = 'Todos';
-        headerElement.className = 'all-users';
-    } else {
-        headerElement.textContent = selectedUser;
-        headerElement.className = 'specific-user';
-    }
+    headerElement.textContent = selectedGroup.has('all') 
+        ? 'Todos' 
+        : Array.from(selectedGroup).join(', ');
 }
 
 function logoutUser() {
@@ -260,8 +317,13 @@ function logoutUser() {
 }
 
 function initializeChat() {
+    selectedGroup.clear();
+    selectedGroup.add('all');
+    groupSelections.clear();
+
     setInterval(updateUserList, 3000);
     setInterval(updateMessages, 1500);
     updateSelectedUserHeader();
     updateUserList();
+    updateMessages(); 
 }

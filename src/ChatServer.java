@@ -2,7 +2,9 @@ import java.rmi.RemoteException;
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
 import java.rmi.server.UnicastRemoteObject;
+import java.time.Instant;
 import java.util.*;
+import java.util.stream.Collectors;
 import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
@@ -38,24 +40,98 @@ public class ChatServer implements ChatInterface, java.rmi.Remote {
         }
     }
 
-    public synchronized void sendMessage(String from, String to, String message) {
-        String key = getKey(from, to);
-        userMessages.putIfAbsent(key, new ArrayList<>());
-        String formatted = from + ": " + message;
-        userMessages.get(key).add(formatted);
-        saveMessageToXML(from, to, message);
+    public synchronized void sendMessage(String from, String to, String message) throws RemoteException {
+        try {
+            String formattedMessage = from + ": " + message;
+            
+            String groupKey = "all".equalsIgnoreCase(to) 
+                ? getKey(from, "SYSTEM_BROADCAST")
+                : generateGroupKey(from, to);
+            
+            userMessages.putIfAbsent(groupKey, new ArrayList<>());
+            userMessages.get(groupKey).add(formattedMessage);
+            
+            saveMessageToXML(from, to, message);
+            
+        } catch (Exception e) {
+            throw new RemoteException("No se pudo procesar el mensaje: " + e.getMessage());
+        }
     }
-
+        
     public synchronized void sendBroadcast(String from, String message) {
         for (String user : connectedUsers) {
             if (!user.equals(from)) {
-                sendMessage(from, user, "[Broadcast] " + message);
+                try {
+                    sendMessage(from, user, "[Broadcast] " + message);
+                } catch (RemoteException e) {
+                    System.err.println("Error al enviar el broadcast a " + user + ": " + e.getMessage());
+                }
             }
         }
+
+        String broadcastKey = getKey(from, "SYSTEM_BROADCAST");
+        userMessages.putIfAbsent(broadcastKey, new ArrayList<>());
+        userMessages.get(broadcastKey).add(from + ": [Broadcast] " + message);
+        saveMessageToXML(from, "all", message);
     }
 
     public synchronized List<String> getMessages(String user1, String user2) {
-        return userMessages.getOrDefault(getKey(user1, user2), new ArrayList<>());
+        try {
+            //broadcast
+            if ("all".equalsIgnoreCase(user2)) {
+                String broadcastKey = getKey(user1, "SYSTEM_BROADCAST");
+                return userMessages.getOrDefault(broadcastKey, new ArrayList<>());
+            }
+
+            //multicast
+            List<String> participants = new ArrayList<>();
+            participants.add(user1);
+            participants.addAll(Arrays.asList(user2.split(",")));
+            
+            Collections.sort(participants);
+            String groupKey = String.join(":", participants);
+            
+            return userMessages.getOrDefault(groupKey, new ArrayList<>());
+        } catch (Exception e) {
+            System.err.println("Error getting messages: " + e.getMessage());
+            return new ArrayList<>();
+        }
+    }
+
+    public synchronized String getMessagesXML(String user1, String user2) {
+        try {
+            Document doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().newDocument();
+            Element root = doc.createElement("messages");
+            doc.appendChild(root);
+
+            List<String> messages = getMessages(user1, user2);
+            for (String message : messages) {
+                Element msgElement = doc.createElement("message");
+                
+                String[] parts = message.split(": ", 2);
+                String sender = parts.length > 0 ? parts[0] : "Unknown";
+                String content = parts.length > 1 ? parts[1] : "";
+
+                Element fromEl = doc.createElement("from");
+                fromEl.setTextContent(sender);
+                msgElement.appendChild(fromEl);
+
+                Element textEl = doc.createElement("text");
+                textEl.setTextContent(content);
+                msgElement.appendChild(textEl);
+
+                root.appendChild(msgElement);
+            }
+
+            TransformerFactory tf = TransformerFactory.newInstance();
+            Transformer transformer = tf.newTransformer();
+            StringWriter writer = new StringWriter();
+            transformer.transform(new DOMSource(doc), new StreamResult(writer));
+            
+            return writer.toString();
+        } catch (Exception e) {
+            return "<messages><error>Error generating XML</error></messages>";
+        }
     }
 
     public synchronized List<String> getConnectedUsers() {
@@ -64,6 +140,14 @@ public class ChatServer implements ChatInterface, java.rmi.Remote {
 
     private String getKey(String user1, String user2) {
         return user1.compareTo(user2) < 0 ? user1 + ":" + user2 : user2 + ":" + user1;
+    }
+
+    private String generateGroupKey(String from, String to) {
+        List<String> participants = new ArrayList<>();
+        participants.add(from);
+        participants.addAll(Arrays.asList(to.split(",")));
+        Collections.sort(participants);
+        return String.join(":", participants);
     }
 
     private void saveMessageToXML(String from, String to, String message) {
@@ -188,7 +272,7 @@ public class ChatServer implements ChatInterface, java.rmi.Remote {
                 handleUnregister(exchange); 
             }
             else {
-                sendErrorResponse(exchange, 404, "Endpoint not found");
+                sendErrorResponse(exchange, 404, "Endpoint no encontrado");
             }
         } catch (Exception e) {
             sendErrorResponse(exchange, 500, "Server error: " + e.getMessage());
@@ -297,19 +381,9 @@ public class ChatServer implements ChatInterface, java.rmi.Remote {
             String query = exchange.getRequestURI().getQuery();
             Map<String, String> params = parseQuery(query);
             
-            List<String> messages = getMessages(params.get("user1"), params.get("user2"));
+            String xmlResponse = getMessagesXML(params.get("user1"), params.get("user2"));
+            sendXMLResponse(exchange, xmlResponse);
             
-            Document doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().newDocument();
-            Element root = doc.createElement("messages");
-            doc.appendChild(root);
-
-            for (String msg : messages) {
-                Element msgEl = doc.createElement("message");
-                msgEl.setTextContent(msg);
-                root.appendChild(msgEl);
-            }
-
-            sendXMLResponse(exchange, documentToString(doc));
         } catch (Exception e) {
             sendErrorResponse(exchange, 400, "Peticion invalida");
         }
